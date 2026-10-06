@@ -1,0 +1,133 @@
+---
+title: Configuration
+description: Customize your Sea-it trailer with the right specifications and settings for your specific transport needs.
+---
+
+## Overview
+
+Configure your Sea-it trailer, powered by the genius system, to match your transport requirements. Select from various axle setups, suspension types, load capacities, and firmware options. Use the dashboard at `https://dashboard.example.com` to apply changes or update via the API at `https://api.example.com/genius/config`.
+
+<Callout kind="tip">
+  Always consult your dealer before major changes to ensure compliance with local regulations.
+</Callout>
+
+## Configuration Process
+
+Follow these steps to update your trailer's settings.
+
+<Steps>
+  <Step title="Access Dashboard" icon="monitor">
+    Log in to `https://dashboard.example.com` with your credentials.
+  </Step>
+  <Step title="Select Category" icon="settings">
+    Choose axles, suspension, or firmware from the menu.
+  </Step>
+  <Step title="Apply Changes" icon="save">
+    Review and save. Test on a short route.
+  </Step>
+</Steps>
+
+## Axle and Suspension Setups
+
+Choose setups based on your load and terrain.
+
+<Tabs>
+  <Tab title="Standard Axle" icon="truck">
+    Ideal for general freight.
+
+    <ParamField path="axles.count" param-type="number" required="true">
+      Number of axles, typically `2` or `3`.
+    </ParamField>
+
+    <ParamField path="suspension.type" param-type="string">
+      Set to `"leaf-spring"` for durability.
+    </ParamField>
+  </Tab>
+  <Tab title="Heavy Duty" icon="shield">
+    For overloads up to `40t`.
+
+    <ParamField path="axles.count" param-type="number">
+      Use `3` or `4`.
+    </ParamField>
+
+    <ParamField path="suspension.type" param-type="string" required="true">
+      `"air"` for smooth handling.
+    </ParamField>
+  </Tab>
+</Tabs>
+
+## Load Capacity Adjustments
+
+Adjust for your cargo weight.
+
+| Setup | Max Load | Axles | Suspension |
+|-------|----------|-------|------------|
+| Light | `<20t`  | 2     | Leaf      |
+| Medium| `20-30t`| 3     | Air       |
+| Heavy | `>30t`  | 4     | Hydraulic |
+
+Use the API to set:
+
+<CodeGroup tabs="JavaScript,Python">
+  ```javascript
+  const config = {
+    loadCapacity: 35000,
+    axles: 3
+  };
+  await fetch('https://api.example.com/genius/config', {
+    method: 'POST',
+    body: JSON.stringify(config)
+  });
+  ```
+  ```python
+  import requests
+  config = {
+      "loadCapacity": 35000,
+      "axles": 3
+  }
+  requests.post('https://api.example.com/genius/config', json=config)
+  ```
+</CodeGroup>
+
+## Firmware Settings
+
+Update firmware for optimal performance.
+
+<Expandable title="Advanced Firmware Options" default-open="false">
+  Access via API:
+
+  <ParamField header="Firmware-Version" param-type="string" required="true">
+    Current version, e.g., `v2.1.0`.
+  </ParamField>
+
+  ```json
+  {
+    "firmware": {
+      "autoLevel": true,
+      "tiltSensor": "enabled"
+    }
+  }
+  ```
+</Expandable>
+
+<Columns cols={3}>
+  <Card title="Quick Config" icon="zap" href="/quickstart">
+    Basic setup guide.
+  </Card>
+  <Card title="Troubleshooting" icon="alert-triangle" href="#">
+    Common issues.
+  </Card>
+  <Card title="Dealer Support" icon="phone" href="https://www.stas.be/en-gb/contact">
+    Get expert help.
+  </Card>
+</Columns>
+
+## Best Practices
+
+- Test adjustments on flat ground first.
+- Monitor sensors after changes.
+- Schedule annual reviews with your dealer.
+
+<Callout kind="alert">
+  Exceeding rated capacities voids warranty.
+</Callout>

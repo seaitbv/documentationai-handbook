@@ -1,0 +1,144 @@
+---
+title: Changelog
+description: Version history of Sea-it, including recent updates, new features, and resolved issues.
+---
+
+## Recent Releases
+
+Sea-it delivers reliable trailer monitoring with features like real-time tracking and automated maintenance alerts. Review the latest releases below to see new capabilities, improvements, and fixes. Each release includes migration guidance where needed.
+
+<Callout kind="info">
+  Check the [downloads page](https://www.stas.be/en-gb/downloads) for the latest firmware and app updates. Always back up your configuration before upgrading.
+</Callout>
+
+<Update label="2024-10-15" description="v1.2.0" tags={["feature", "bugfix"]}>
+
+## New Features
+
+- Added geofencing alerts for trailer location monitoring.
+- Introduced load weight integration with external sensors.
+
+## Improvements
+
+- Enhanced battery life reporting accuracy by 20%.
+- Optimized dashboard refresh rate for mobile devices.
+
+## Bug Fixes
+
+- Fixed intermittent GPS signal loss during long-haul trips.
+- Resolved notification delays in low-connectivity areas.
+
+</Update>
+
+<Update label="2024-09-20" description="v1.1.0" tags={["feature", "improvement"]}>
+
+## New Features
+
+- Real-time tire pressure monitoring via Bluetooth sensors.
+- Customizable maintenance schedules based on usage patterns.
+
+## Improvements
+
+- Faster API response times for fleet management integrations.
+- Improved user interface with dark mode support.
+
+</Update>
+
+<Update label="2024-08-10" description="v1.0.0" tags={["breaking", "feature"]}>
+
+## New Features
+
+- Core trailer telematics dashboard with live status.
+- Basic API for third-party integrations.
+
+## Breaking Changes
+
+- Updated authentication to use JWT tokens instead of API keys.
+
+</Update>
+
+## How to Update
+
+Follow these steps to upgrade your Sea-it devices safely.
+
+<Steps>
+  <Step title="Backup Configuration" icon="database">
+    Export your current settings.
+
+````json
+{
+  "deviceId": "sea-it-12345",
+  "geofence": {
+    "enabled": true,
+    "radius": 100
+  }
+}
+````
+  </Step>
+  <Step title="Download Firmware" icon="download">
+    Visit the [downloads page](https://www.stas.be/en-gb/downloads) and select the latest version matching your hardware.
+  </Step>
+  <Step title="Apply Update" icon="upload">
+    Use the Sea-it app or web dashboard to flash the firmware.
+  </Step>
+</Steps>
+
+<CodeGroup tabs="Dashboard,CLI">
+````javascript
+// Dashboard API call
+const response = await fetch('https://api.sea-it.com/devices/sea-it-12345/update', {
+  method: 'POST',
+  headers: { 'Authorization': 'Bearer YOUR_TOKEN' },
+  body: JSON.stringify({ version: '1.2.0' })
+});
+````
+````bash
+# CLI update command
+sea-it-cli update --device sea-it-12345 --version 1.2.0 --token YOUR_TOKEN
+````
+</CodeGroup>
+
+## Migration Guide
+
+<Tabs>
+  <Tab title="From v1.0 to v1.1" icon="arrow-right">
+    <Callout kind="tip">
+      Update your auth tokens to JWT format.
+    </Callout>
+
+    Replace API key headers:
+
+````javascript
+// Old
+headers: { 'X-API-Key': 'old-key' }
+
+// New
+headers: { 'Authorization': 'Bearer new-jwt-token' }
+````
+  </Tab>
+  <Tab title="From v1.1 to v1.2" icon="settings">
+    Enable new features in config:
+
+````json
+{
+  "geofencing": {
+    "enabled": true,
+    "alerts": ["email", "sms"]
+  }
+}
+````
+  </Tab>
+</Tabs>
+
+<Expandable title="Advanced Migration Notes" default-open="false">
+  For fleet operators with `>50` devices, use batch updates via the API. Contact support for enterprise scripts. Test on a single device first.
+</Expandable>
+
+<Columns cols={2}>
+  <Card title="Quickstart" icon="book-open" href="/quickstart">
+    Get started with the latest version.
+  </Card>
+  <Card title="API Reference" icon="code" href="/authentication">
+    Integrate with your systems.
+  </Card>
+</Columns>
