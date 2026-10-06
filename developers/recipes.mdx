@@ -1,0 +1,125 @@
+---
+title: "Recipes for common changes"
+description: "Step-by-step checklists for the changes developers make most often in STAS Genius: strings, API routes, schema columns, permissions, apps, notifications, models and prompts."
+---
+
+## Before any recipe
+
+Start in a fresh worktree off `origin/main` and write the acceptance list first. See [Workflow](/developers/workflow).
+
+## Add a user-facing string
+
+<Steps>
+  <Step title="Add the key to all three dictionaries" icon="languages" title-type="h3">
+    Add it to `nl`, `fr` and `en` in `lib/i18n.ts`. A key missing in `fr` or `en` fails the build.
+  </Step>
+
+  <Step title="Use it" icon="type" title-type="h3">
+    `getT()` in server components and API routes, `useT()` in client components. Use `{placeholders}` for values; the test checks they survive translation.
+  </Step>
+
+  <Step title="Check the wording" icon="check-circle" title-type="h3">
+    No technical names, no status codes, STAS in capitals, no explanatory helper line. Run `npx tsx lib/i18n.test.ts`.
+  </Step>
+</Steps>
+
+## Add an API route
+
+<Steps>
+  <Step title="Gate it" icon="shield" title-type="h3">
+    ```ts title="app/api/example/route.ts"
+    import { requireApiUser } from "@/lib/access";
+    import { getT } from "@/lib/i18n-server";
+
+    export async function POST(req: Request) {
+      const gate = await requireApiUser();
+      if ("error" in gate) return gate.error;
+      const t = await getT();
+      // validate the body with zod before using it
+    }
+    ```
+  </Step>
+
+  <Step title="Validate input" icon="filter" title-type="h3">
+    Parse the body with a `zod` schema with explicit `max()` bounds on every string and array. Check permissions (`gate.user.disabledBlocks`, feature grants) before any model or Graph call.
+  </Step>
+
+  <Step title="Hold credits if it calls a model" icon="coins" title-type="h3">
+    `hold()` before the first call, register `after()` with `recordUsage` and `settle` before the `try`. See [Credits and costs](/developers/credits-and-costs).
+  </Step>
+
+  <Step title="Answer with sentences" icon="message-square" title-type="h3">
+    Errors are `{ error, hint }` built from `t()`. Log the technical cause on the server.
+  </Step>
+</Steps>
+
+## Add a database column or table
+
+<Steps>
+  <Step title="Edit db/schema.sql idempotently" icon="database" title-type="h3">
+    Use `create table if not exists`, `alter table ... add column if not exists`, and data migrations that are safe to run twice.
+  </Step>
+
+  <Step title="Apply it before merging" icon="play" title-type="h3">
+    Run `npm run db:init`. The schema is shared with production, and the container rolls as soon as the pull request completes.
+  </Step>
+
+  <Step title="Respect retention" icon="clock" title-type="h3">
+    Decide how long the data lives. Content-free tables without a foreign key must be named in `runRetention`. Add a DPIA line if the data is personal.
+  </Step>
+</Steps>
+
+## Add a permission, feature or app
+
+| You want | Add |
+|---|---|
+| A switch for a whole app | an `APPS` entry with `toggle: true` in `lib/apps.ts`; the key `app:<key>` derives from it |
+| A capability inside an app | a `FEATURES` entry; the key is `feature:<app>.<key>` |
+| A paid part an afdeling can switch off | a `MODULES` entry; check it with `disabledModulesFor` |
+| A block that can be switched off | `gateable` on the block in `lib/blocks.ts` |
+
+Then:
+
+1. Gate the page **and** every server action and API route that uses it.
+2. Add the key to the migration list in `db/schema.sql` if existing tenants should get it; a new key reaches nobody otherwise.
+3. Add labels in all three languages.
+4. Extend `lib/permissions.test.ts` or `lib/apps.test.ts`.
+
+An app appears in the dock because it is in `APPS`; `who` decides who sees the icon, and the page keeps its own gate.
+
+## Send a notification
+
+Call `notify()` from the library function that writes the event, not from the route:
+
+```ts
+import { notify } from "@/lib/notificationstore";
+
+// existing kind: a colleague was @-tagged on a task
+await notify(taggedEmails, "todo_tagged", todo.id, actorEmail);
+```
+
+1. Add the kind to `NOTIFICATION_KINDS` in `lib/notifications.ts`, with its link in `hrefOf()` and a sentence key `notif.<kind>` in all three languages.
+2. A notification row holds no text. The sentence is built at read time from the target, and a target that is gone produces no line.
+3. `notify()` never throws, so it cannot break the action it follows.
+
+## Log an admin action
+
+Every admin action writes `admin_log` through `adminLog()` in `lib/adminlog.ts`. User-facing events that matter for reporting go through `recordEvent()` in `lib/events.ts`.
+
+## Add a source
+
+See [Sources and connectors](/developers/sources#add-a-new-source).
+
+## Add or switch a model
+
+See [Models and the AI Gateway](/developers/models#add-or-switch-a-model).
+
+## Change a prompt
+
+See [Prompts and skills](/developers/prompts-and-skills#changing-a-prompt-safely).
+
+## Document the change
+
+1. A dated design note in `claudedocs/YYYY-MM-DD-<topic>.md` with the narrative and measurements.
+2. A short summary and a pointer in the right section of `CLAUDE.md`. Keep `CLAUDE.md` under 110 000 characters (`wc -m CLAUDE.md`).
+3. A row in `claudedocs/2026-09-24-layout.md` for each new file.

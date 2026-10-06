@@ -11,6 +11,131 @@
   "navigation": {
     "tabs": [
       {
+        "tab": "Developers",
+        "icon": "code-xml",
+        "groups": [
+          {
+            "group": "Start here",
+            "icon": "rocket",
+            "pages": [
+              {
+                "title": "Overview",
+                "path": "developers/overview",
+                "icon": "compass"
+              },
+              {
+                "title": "Local setup",
+                "path": "developers/local-setup",
+                "icon": "terminal"
+              },
+              {
+                "title": "Hard rules",
+                "path": "developers/hard-rules",
+                "icon": "shield"
+              },
+              {
+                "title": "Workflow",
+                "path": "developers/workflow",
+                "icon": "git-branch"
+              }
+            ]
+          },
+          {
+            "group": "System",
+            "icon": "layers",
+            "pages": [
+              {
+                "title": "Architecture",
+                "path": "developers/architecture",
+                "icon": "network"
+              },
+              {
+                "title": "Foundry agent",
+                "path": "developers/agent",
+                "icon": "bot"
+              },
+              {
+                "title": "Models and gateway",
+                "path": "developers/models",
+                "icon": "cpu"
+              },
+              {
+                "title": "Prompts and skills",
+                "path": "developers/prompts-and-skills",
+                "icon": "message-square-text"
+              },
+              {
+                "title": "Sources and connectors",
+                "path": "developers/sources",
+                "icon": "plug"
+              },
+              {
+                "title": "Meetings",
+                "path": "developers/meetings",
+                "icon": "mic"
+              }
+            ]
+          },
+          {
+            "group": "Platform",
+            "icon": "server",
+            "pages": [
+              {
+                "title": "Auth and permissions",
+                "path": "developers/auth-and-permissions",
+                "icon": "key-round"
+              },
+              {
+                "title": "Data and privacy",
+                "path": "developers/data-and-privacy",
+                "icon": "database"
+              },
+              {
+                "title": "Credits and costs",
+                "path": "developers/credits-and-costs",
+                "icon": "coins"
+              },
+              {
+                "title": "Frontend conventions",
+                "path": "developers/frontend",
+                "icon": "layout"
+              },
+              {
+                "title": "Hosting and desktop",
+                "path": "developers/hosting-and-desktop",
+                "icon": "cloud"
+              }
+            ]
+          },
+          {
+            "group": "Reference",
+            "icon": "book-open",
+            "pages": [
+              {
+                "title": "Testing",
+                "path": "developers/testing",
+                "icon": "flask-conical"
+              },
+              {
+                "title": "Recipes",
+                "path": "developers/recipes",
+                "icon": "list-checks"
+              },
+              {
+                "title": "Gotchas",
+                "path": "developers/gotchas",
+                "icon": "triangle-alert"
+              },
+              {
+                "title": "Glossary",
+                "path": "developers/glossary",
+                "icon": "book-a"
+              }
+            ]
+          }
+        ]
+      },
+      {
         "tab": "Documentation",
         "icon": "book",
         "groups": [
@@ -122,5 +247,6 @@
         ]
       }
     ]
-  }
+  },
+  "initialRoute": "developers/overview"
 }

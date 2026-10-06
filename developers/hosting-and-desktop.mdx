@@ -1,0 +1,68 @@
+---
+title: "Hosting and the desktop app"
+description: "How STAS Genius runs on Azure Container Apps, how settings and secrets reach the container, what the Docker build needs, and how the Electron desktop shell is built and released."
+---
+
+## Hosting on Azure Container Apps
+
+The web app runs as one Azure Container App in Sweden Central, built from the repository's `Dockerfile` (Node 22, a self-contained `server.js` with only the modules it imports). Its only credential is a user-assigned managed identity, which it uses for Postgres, the Foundry agent, the Speech endpoint and Cost Management.
+
+| Concern | How |
+|---|---|
+| Plain settings | environment variables on the Container App |
+| Secrets (`AUTH_SECRET`, `AUTH_MICROSOFT_ENTRA_ID_SECRET`, `AI_GATEWAY_API_KEY`) | Key Vault references on the Container App |
+| Database access | the managed identity, a DML-only Postgres role, and one firewall rule for the environment's outbound IP |
+| Images | built with `az acr build` into the project's container registry |
+| Rollout | `az containerapp update` from the pipeline |
+
+`AUTH_SCOPES` is deliberately not set anywhere. Resource names and the full resource table are in `claudedocs/2026-09-24-hosting.md`.
+
+<Callout kind="alert">
+  `next build` imports modules that call `required()` on environment variables. The Dockerfile's build stage therefore sets placeholder values for `AI_GATEWAY_HOST`, `AI_GATEWAY_API_KEY` and `AUTH_TENANTS`. Any new import-time `required()` needs a placeholder there too, or the image build fails.
+</Callout>
+
+<Callout kind="danger">
+  If Postgres starts refusing with "no pg_hba.conf entry", the environment's outbound IP moved. Replace the firewall rule with the new IP; never open `0.0.0.0/0`.
+</Callout>
+
+### The pipeline
+
+A push to `main` (a completed pull request) triggers `azure-pipelines.yml`: a test job without Azure credentials (secret scan, `npm ci`, `npm audit`, SBOM, lint, tests), then a deploy job that installs nothing (`az acr build`, `az containerapp update`). The trigger lags about four minutes, a run takes about ten, and there is one build slot: never queue a second run on top.
+
+The pipeline does **not** run `db:init` and does **not** deploy the Foundry agent. See the deploy order in [Workflow](/developers/workflow#deploy-order).
+
+## The desktop app
+
+`desktop/` is its own npm project: an Electron shell (with `electron-builder` and `electron-updater`) that loads the hosted web app in one window. It sits outside the root tooling and the Docker build context.
+
+### The shell is dumb
+
+All logic stays in the web app. The shell only exposes a small bridge, and the web app decides what to show and where a click lands.
+
+| Part | File |
+|---|---|
+| Bridge type, as the web app sees it | `lib/desktop.ts` |
+| Bridge runtime | `desktop/src/preload.ts` |
+
+Change both files together; the type and the runtime must match.
+
+- One window, session partition `persist:genius`.
+- Links with `_blank` or `window.open` open in the system browser; top-level navigation (the Entra sign-in round) stays in the window.
+- `getDisplayMedia` returns the loopback of the first screen, so meetings can record system audio (`captureSystem` in `lib/recorder.ts`). Without the Screen Recording permission it returns empty, which is never a reason to fail the recording.
+- Notifications: the bridge polls the bell and announces each unread line once, only when the window is not focused, never the backlog.
+
+### Releasing a desktop version
+
+<Steps>
+  <Step title="Tag the release" icon="tag" title-type="h3">
+    Push a tag `desktop-v<semver>`. The desktop pipeline (`azure-pipelines-desktop.yml`) builds and uploads the installers to blob storage under the version, and an index job writes `versions.json`.
+  </Step>
+
+  <Step title="Publish it" icon="rocket" title-type="h3">
+    A superadmin chooses the version on `/admin/desktop` and clicks **Publiceer**. That writes `app_setting.desktop_release`, the one live version.
+  </Step>
+
+  <Step title="Clients update" icon="refresh-cw" title-type="h3">
+    `electron-updater` reads the feed through `/api/desktop/*`, which redirects to the published version's files (`feedFile` is the boundary). People download the installer from `/desktop`.
+  </Step>
+</Steps>

@@ -1,0 +1,103 @@
+---
+title: "Hard rules for STAS Genius developers"
+description: "The non-negotiable rules in STAS Genius: the AI Gateway, credits, privacy, user-facing errors, languages and UI text, with the reason behind each."
+---
+
+## Why these rules exist
+
+Most of these rules guard against failures that do not throw. A bypassed gateway still answers, a missed credit settle still renders, a leaked source still stores. Tests cannot catch what nothing reports, so the rules are written down and enforced in one place each.
+
+## Every model call goes through the AI Gateway
+
+Every model call and every AI tool call goes to the project's Azure AI Gateway (the host in `AI_GATEWAY_HOST`). Never call Foundry, `*.openai.azure.com`, `api.openai.com` or `api.anthropic.com` directly, not even for a quick test.
+
+| What the gateway gives you | What a bypass silently drops |
+|---|---|
+| Provider credentials stay out of the app | A provider key in an `.env` that nobody rotates |
+| Content safety, rate limits, IP filters | All of them, with no alert |
+| One telemetry point for tokens and latency | Traffic you cannot see in the numbers |
+| One key to revoke | A second credential still working after revocation |
+
+`lib/model.ts` enforces this: one base URL built from `AI_GATEWAY_HOST`, validated against `https://<name>.azure-api.net`, and a throw when the host or key is missing.
+
+<Callout kind="danger">
+  Do not add a fallback, an `AI_DIRECT` switch or a second SDK client pointed at a provider. A fallback that works is a bypass nobody notices. To add a model, register it on the gateway and reference it by name.
+</Callout>
+
+The one accepted exception is **MAI-Transcribe-2** in `lib/speech.ts`. Speech is not a gateway model, so it uses the app's managed identity, holds credits before each call and writes a `model_usage` row per segment.
+
+## Hold credits before, settle after
+
+Every paid call follows the same pattern in `lib/credits.ts`:
+
+1. `hold()` with the estimate from `estimateCredits()` **before** the first model call.
+2. `settle()` in `after()` with the real cost from the recorded spend.
+
+```ts title="app/api/summarize/route.ts (excerpt)"
+const requestKey = crypto.randomUUID();
+const estimate = estimateCredits("summarize", text.length);
+const reserved = await hold(gate.email, requestKey, estimate, "summarize");
+if (!reserved.ok) {
+  return Response.json({ error: t("error.noCredits"), hint: t("error.noCredits.hint") }, { status: 402 });
+}
+
+// Registered before the try: cancelling after twelve of fifteen calls still spent that money.
+const spent: Spent[] = [];
+after(async () => {
+  await recordUsage(gate.email, "summarize", spent, conversationId);
+  await settle(gate.email, requestKey, estimate, toCredits(eurOf(spent)));
+});
+
+try {
+  // every model call pushes its usage onto `spent`
+} catch (err) {
+  // report the failure; the settle above still runs
+}
+```
+
+<Callout kind="alert">
+  Register the settle **before** the `try`, never only on the success path. The most expensive interruptions are the ones that would otherwise vanish. Never `await result.totalUsage` inside `after()` on the chat route; it hangs when the person presses Stop.
+</Callout>
+
+Credits can be switched off for everyone (`app_setting.credits_enforced = off`, a superadmin switch on `/admin/credits`). `hold()` then still books but never refuses, so keep the hold and settle calls in every route regardless.
+
+The ledger is append-only: `credit_entry` rows of kind `grant`, `hold`, `settle` and `adjust`. There is no balance column. 1 credit is EUR 0.01 of Azure list price.
+
+## Source text is never stored
+
+Sources the app fetches or the person attaches travel to the model but not to the database.
+
+- `inlineSources()` folds `data-source` parts into the last user message for the model's copy.
+- `strip()` removes them before the insert and keeps a `source_ref` (kind, name, length, HMAC).
+
+Both functions live side by side in `lib/conversations.ts`, because when they disagree nothing throws. Change one, check the other, and keep `lib/conversations.test.ts` green.
+
+## Every API route is a trust boundary
+
+- Call `requireApiUser()` in every API route and `requireAdmin(area)` in every admin server action. Hidden links are cosmetic.
+- Identity comes from Entra; the role is read from Postgres on every request and never cached in the JWT.
+- A new permission key reaches nobody until it is granted. Add it to the migration list in `db/schema.sql`.
+- Extra Graph scopes are minted per request with `tokenForScope()`, never added to `DEFAULT_SCOPES`. A refusal then costs one tile, not everybody's sign-in.
+
+## Errors the user reads
+
+A person gets a plain sentence and what to do next. Technical detail goes to the server log.
+
+- No status codes, API names, model names, deployment names or file paths in user text. `lib/i18n.test.ts` checks every dictionary value.
+- Every error with a fix carries the fix in a `hint`. Render `hint` wherever you render `error`.
+- Specialists return failures as `{ error, hint }` **output**, never thrown. A thrown error becomes a tool-error part and the model invents a cause.
+
+## Three languages, Dutch first
+
+- All strings live in `lib/i18n.ts`. `fr` and `en` are typed against `nl`, so a missing key is a build error.
+- Use `getT()` in server components and `useT()` in client components.
+- Every date a person reads is Brussels wall-clock. Build formatters with `dateFormat(locale, opts)`, never with the default time zone.
+- **STAS** is always in capitals in text, never in identifiers.
+
+## No explanatory text in the UI
+
+Since 2026-10-01 there is no grey helper line under or next to a control, field, section or page. Use a label, a tooltip, an empty state, or `/help`. Editing text or AI content always goes through selection and the floating bar, never a separate button.
+
+## Never evaluate people
+
+Stored conversations and usage data must never be used to judge an individual's performance (EU AI Act Annex III 4(b)). Reporting hides groups under the k threshold, and the per-person view must never become a ranking.

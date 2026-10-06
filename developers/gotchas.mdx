@@ -1,0 +1,120 @@
+---
+title: "Gotchas that cost real time"
+description: "Known traps in STAS Genius: Azure context, the gateway, model quirks, Graph scopes, the Foundry agent, local development and shared environments, each with the fix."
+---
+
+## How to use this page
+
+Each entry cost someone hours once. Read the titles before you debug something that looks impossible. The measurements and repro commands behind them are in `claudedocs/2026-09-24-gotchas.md`.
+
+## Azure and the gateway
+
+<ExpandableGroup>
+  <Expandable title="Everything Azure refuses your token" default-open="false">
+    Your `az` context drifted to a customer tenant. `DefaultAzureCredential` then hands that tenant's tokens to resources in the hosting tenant, which refuse them. Run `az account show` and compare it with the subscription in `CLAUDE.md`; fix it with `az login --tenant` and `az account set -s`.
+  </Expandable>
+
+  <Expandable title="One deployment 404s, the others answer" default-open="false">
+    The Foundry account resolves deployments intermittently, per deployment and on any route. A resolving call carries `x-ms-deployment-name`; a flaky 404 does not. Sample several calls before you blame your code.
+  </Expandable>
+
+  <Expandable title="Every model returns model_not_found" default-open="false">
+    Usually an old model name. OpenAI deployments carry `-v2` since 2026-09-18, and Claude needs its full gateway alias (`<foundry-account>/<deployment>`, the `CLAUDE` constant).
+  </Expandable>
+
+  <Expandable title="403 content safety check on a long request" default-open="false">
+    The serialized body passed about 500 000 characters. Base64 and `\u` escapes count. Send text, not native PDFs, and respect `MAX_REQUEST_CHARS`.
+  </Expandable>
+
+  <Expandable title="Gateway returns 200 with an empty body on a tool call" default-open="false">
+    The gateway cannot stream tool calls on the gpt-5 2025-08-07 models. Use the non-streaming wrappers (`simulateStreamingMiddleware`, `NonStreamingChatClient`). Never call Foundry directly to work around it.
+  </Expandable>
+
+  <Expandable title="Adding a model in the portal fails or does nothing" default-open="false">
+    "Add existing" on the gateway always returns 400, and ARM model `PUT`s are accepted and ignored. Use the gateway's **Models → Import from Foundry**. Management reads use API version `2025-09-01-preview`.
+  </Expandable>
+
+  <Expandable title="A paid AI Search service appeared" default-open="false">
+    A failed Foundry vector-index wizard leaves one behind. Check `az search service list` and delete it.
+  </Expandable>
+</ExpandableGroup>
+
+## Models
+
+<ExpandableGroup>
+  <Expandable title="Claude returns 400 in a tool loop" default-open="false">
+    Either a forced `tool_choice`, or a request whose tool list or system prompt differs from the previous step's. A thinking block is bound to its prefix. Keep one tool set per turn.
+  </Expandable>
+
+  <Expandable title="A gpt-5 call returns 400" default-open="false">
+    No `max_tokens`, and `temperature` only 1. With tools on chat completions, gpt-5.6 and later need `reasoning_effort: "none"`. Probe with exactly the parameters the app sends.
+  </Expandable>
+
+  <Expandable title="Dutch text turns into Cyrillic mid-word" default-open="false">
+    gpt-5-nano drifts scripts in long Dutch or French prose. Keep long prose on Claude; short strict fields may stay on nano.
+  </Expandable>
+
+  <Expandable title="Strict structured output rejects the schema" default-open="false">
+    Set `supportsStructuredOutputs: true`, and use `nullable()` instead of `optional()`.
+  </Expandable>
+</ExpandableGroup>
+
+## Microsoft Graph and Entra
+
+<ExpandableGroup>
+  <Expandable title="Teams search returns nothing" default-open="false">
+    The Search API for Teams messages needs both `Chat.Read` and `ChannelMessage.Read.All`, whatever the documentation table says.
+  </Expandable>
+
+  <Expandable title="A scope disappeared after a tenant admin consented" default-open="false">
+    An admin's consent replaces the grant list with what is registered. Every scope must be in `REGISTERED_SCOPES` and on the registration.
+  </Expandable>
+
+  <Expandable title="HTTP 431 and no log line" default-open="false">
+    The cookie passed the header limit, which fires before Next.js runs. Keep photos and tokens out of the session.
+  </Expandable>
+
+  <Expandable title="OAuth redirect points at 0.0.0.0" default-open="false">
+    Inside Container Apps `req.url` reads `https://0.0.0.0:3000`. Build origins from `AUTH_URL`.
+  </Expandable>
+</ExpandableGroup>
+
+## The agent
+
+<ExpandableGroup>
+  <Expandable title="CS0433 on build" default-open="false">
+    Remove the `Azure.Identity` package reference.
+  </Expandable>
+
+  <Expandable title="Old behaviour after a web deploy" default-open="false">
+    The agent is deployed separately with `azd deploy`. The pipeline never builds it.
+  </Expandable>
+
+  <Expandable title="Deploy succeeded but chat fails" default-open="false">
+    A model setting is wrong; the agent only fails at its first model call. Always verify with a real question.
+  </Expandable>
+</ExpandableGroup>
+
+## Local development and shared environments
+
+<ExpandableGroup>
+  <Expandable title="Another developer's dev server went down" default-open="false">
+    Several sessions share the machine. Stop your own server by PID (`lsof -ti :3001`), never with `pkill -f "next dev"`.
+  </Expandable>
+
+  <Expandable title="npm run dev fails inside a worktree" default-open="false">
+    A symlinked `node_modules` breaks the dev server. Remove the link and run `npm ci` inside the worktree, then start on another port (`PORT=3001`).
+  </Expandable>
+
+  <Expandable title="Local main is far behind" default-open="false">
+    The root checkout is shared and rarely updated. Always branch from `origin/main` after `git fetch`, and check `git worktree list` for someone already working on the same thing.
+  </Expandable>
+
+  <Expandable title="A test click changed shared data" default-open="false">
+    The local app shares data with other environments. Clean up test rows you created, and never script actions against another person's data.
+  </Expandable>
+
+  <Expandable title="Postgres: no pg_hba.conf entry" default-open="false">
+    Your IP or the Container App's outbound IP is not on the firewall. Add a rule for that one IP; never `0.0.0.0/0`.
+  </Expandable>
+</ExpandableGroup>

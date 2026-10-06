@@ -1,0 +1,116 @@
+---
+title: "Models and the AI Gateway"
+description: "Which model runs which job in STAS Genius, how calls reach the Azure AI Gateway, the provider quirks of Claude and gpt-5, and how to add or switch a model safely."
+---
+
+## One gateway, two routes
+
+Every model call goes to the gateway host in `AI_GATEWAY_HOST`, authenticated with the gateway key as the gateway expects it (see `lib/model.ts`). The gateway forwards to one Foundry resource in Sweden Central; its name is in the *Azure* section of `CLAUDE.md`.
+
+| Route | Base path | Used for |
+|---|---|---|
+| OpenAI | `/default/models/openai/v1` | gpt-5 family, embeddings, images |
+| Anthropic passthrough | `/default/models/anthropic/v1/messages` | Claude Opus 5.5 |
+
+The `/default/` segment is mandatory; without it the gateway answers 404. Both the Anthropic SDK and the C# `Anthropic` package send their own auth header; `anthropicAuth` in `lib/model.ts` and `AnthropicKeyHandler` in the agent rewrite it to the header the gateway expects.
+
+<Callout kind="danger">
+  There is no fallback to a provider. If the gateway fails, the call fails. See [Hard rules](/developers/hard-rules).
+</Callout>
+
+## Which model runs which job
+
+`MODELS` in `lib/model.ts` is the one registry for the middle tier. Every pinned key carries a comment with the measurement that pinned it; read it before you move it.
+
+| Key | Model | Why |
+|---|---|---|
+| `router` | `AI_MODEL`, default Claude | the middle tier's default (summaries, query extraction, cluster titles) |
+| `document`, `research` | Claude | mirrors of the agent's settings, used for credit estimates |
+| `summary`, `cleanup`, `gist`, `report` | Claude | long Dutch and French prose, where nano drifts scripts mid-word |
+| `pick` | Claude | reads the conversation and rewrites follow-ups as standalone queries |
+| `read` | Claude | the reading round over a too-long document |
+| `powerbi`, `connectorStrong` | Claude | writes DAX or JQL; a plausible number from a wrong query is the worst failure |
+| `classifier` | `gpt-5-nano-v2` | pinned: its version string is stored on every facet row |
+| `gather` | `gpt-5-nano-v2` | a connector's whole tool list on every turn; mechanical and cost-bound |
+| `vision` | `gpt-5-mini-v2` | transcription accuracy was measured on it |
+| `embedding` | `text-embedding-3-small-v2` | vector search for reporting and meetings |
+| `image` | `gpt-image-1-mini` | the image path only reaches OpenAI-format deployments |
+
+Claude is referenced by its gateway alias, `<foundry-account>/<deployment>`, held in the `CLAUDE` constant. The bare deployment name answers 404. The OpenAI deployments carry a `-v2` suffix.
+
+MAI-Transcribe-2 for meetings is not in `MODELS`; it lives in `lib/speech.ts` and is priced per audio second.
+
+## Two levers, and they move different things
+
+| Lever | Moves | How to change it |
+|---|---|---|
+| `AI_MODEL_ROUTER`, `AI_MODEL_DOCUMENT`, `AI_MODEL_RESEARCH` in `agents/genius/azure.yaml` | the chat router and the agent's specialists | `azd deploy --no-prompt` from `agents/genius` |
+| `AI_MODEL` on the Container App | the middle tier's `router` default | `az containerapp update` |
+
+The pinned keys follow neither lever. Move the two levers together.
+
+## Provider quirks
+
+<Tabs>
+  <Tab title="Claude Opus 5.5" icon="sparkles">
+    - `max_tokens` is required and counts thinking. Defaults: 32 000, smaller on short jobs (`CLAUDE_TOKENS`); the router uses 16 000. Azure books `max_tokens` against the TPM quota up front.
+    - Leave `temperature` out. Thinking is always adaptive: `disabled` or a budget is a 400.
+    - Effort is `medium` on every call unless a job says otherwise.
+    - A forced `tool_choice` is a 400.
+    - A thinking block is bound to its prefix: a tool loop whose next request changes the tool list or system prompt is a 400. Keep one tool set per turn; do not filter tools per step.
+    - A refusal is a 200 with `stop_reason: refusal`. The middle tier throws `RefusedError` (`refusalMiddleware`); the agent answers `Prompts.Refused`.
+  </Tab>
+
+  <Tab title="gpt-5 family" icon="cpu">
+    - No `max_tokens`, and `temperature` only accepts 1. `lib/model.ts` rewrites the body; never add `maxOutputTokens` or `temperature` to a gpt call.
+    - The gateway cannot stream a tool call on these models (200 with an empty body). `simulateStreamingMiddleware` and `NonStreamingChatClient` handle it. Never fix it by calling Foundry directly.
+    - Structured output needs `supportsStructuredOutputs: true`, and strict mode needs `nullable()`, not `optional()`.
+    - `@ai-sdk/openai-compatible` only speaks chat completions. Anything that needs the Responses API is written by hand.
+  </Tab>
+</Tabs>
+
+## Add or switch a model
+
+<Steps>
+  <Step title="Deploy it in Foundry" icon="cloud" title-type="h3">
+    Create the deployment on the project's one Foundry resource (named in `CLAUDE.md`). Everything the app calls has to live there.
+  </Step>
+
+  <Step title="Import it on the gateway" icon="plug" title-type="h3">
+    In the portal, open the gateway's **Models** and use **Import from Foundry**. The portal's "Add existing" always fails, and ARM `PUT`s on models are accepted but do nothing.
+
+    The gateway name is the deployment's name (for example `gpt-5.6-luna`), not an ARM-safe variant. Read it from `properties.deployment.modelName`.
+  </Step>
+
+  <Step title="Add the price row first" icon="receipt" title-type="h3">
+    Add the model to `lib/costs.ts` and update `PRICE_CHECKED_ON`. `lib/costs.test.ts` fails on a name in `MODELS` without a price row. Then reference the model in `MODELS` or the agent's `azure.yaml`.
+  </Step>
+
+  <Step title="Ship code before the env var" icon="git-merge" title-type="h3">
+    Merge the code, then change the environment variable. In the other order the cost book misses the price row.
+  </Step>
+
+  <Step title="Verify with a real call" icon="check-circle" title-type="h3">
+    A deploy that succeeds proves nothing: on 2026-09-09 the agent started and only failed at its first model call. Send a real question through the app and check `model_usage`.
+  </Step>
+</Steps>
+
+## Reading a 404
+
+<ExpandableGroup>
+  <Expandable title="54-byte 'Resource not found'" default-open="false">
+    APIM itself: the model name is wrong or not imported on the gateway.
+  </Expandable>
+
+  <Expandable title="404 without an x-ms-deployment-name header" default-open="false">
+    A flaky deployment on the Foundry account. It comes and goes per deployment. Sample several calls before you debug code; "Document is broken" and "the gateway cannot resolve gpt-5-mini today" look identical.
+  </Expandable>
+
+  <Expandable title="model_not_found on every model" default-open="false">
+    A catalog or alias problem. Locally it is usually an old `AI_MODEL` value; use the `-v2` names. In production, first try the call without the api-key header to see whether the gateway itself answers.
+  </Expandable>
+
+  <Expandable title="403 'content safety check'" default-open="false">
+    The serialized request body passed about 500 000 characters. Base64 and `\u` escapes count toward it, which is why PDFs are sent as text, not natively. See `GATEWAY_BODY_CHARS` in `lib/limits.ts`.
+  </Expandable>
+</ExpandableGroup>

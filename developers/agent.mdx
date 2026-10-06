@@ -1,0 +1,111 @@
+---
+title: "The Foundry hosted agent"
+description: "The C# orchestrator behind STAS Genius chat: why it is a Foundry hosted agent, how the code is organized, how the web app calls it, and how to run, test and deploy it."
+---
+
+## Why a hosted agent
+
+The chat orchestrator runs as a **C#/.NET 10 Foundry hosted agent** in `agents/genius/`. It was moved there on 2026-09-03 so the same orchestrator can later run in Microsoft Teams.
+
+| Option | Why not |
+|---|---|
+| Foundry prompt agent | its "bring your own model" connection does not support the Responses API, so model calls would go around the gateway |
+| Foundry Toolbox tools | they run on the project endpoint, outside the gateway; Bing there sits outside the DPA |
+| Foundry-managed conversations | Postgres stays the store of record (`store: false`) so retention, k-threshold and access log stay where they are |
+| `Microsoft.Agents.AI.Foundry.Hosting` | one fixed agent and a Foundry state store; the app needs per-request configuration and its own output items |
+| Node.js | hosted agents are Python or C# only |
+
+A hosted agent is the team's own container, so the code chooses the base URL and every model call stays on the gateway.
+
+## Code layout
+
+| Folder | Holds |
+|---|---|
+| `Program.cs` | one `GeniusHandler` instance on `AgentHost` with the raw `Azure.AI.AgentServer.Responses` handler |
+| `Hosting/` | `GeniusHandler`: reads the request headers and input items, runs the turn, streams output items |
+| `Gateway/` | `GatewayClients`: one client per model, all pointed at the gateway, body fixes, `AnthropicKeyHandler` |
+| `Orchestrator/` | `Prompts.cs` (every rule), `BlockRuleChatClient.cs` (block forcing, `AlreadyAsked`), `ClaudeAi.cs` (claude.ai's published prompt) |
+| `Specialists/` | `Specialists.cs`: `write_document`, `research`, `generate_image`, `propose_action`, the consent check `NeedsConsent` |
+| `Accounting/` | `RequestScope`, `UsageCaptureChatClient`, `Billing`: per-step spend for the `genius.step` items |
+| `tests/genius.Tests/` | xUnit tests |
+
+## The contract with the web app
+
+`lib/agent-client.ts` calls `{project}/agents/genius/endpoint/protocols/openai/responses` with an Entra bearer from `DefaultAzureCredential`.
+
+| Sent | Meaning |
+|---|---|
+| `x-ms-user-identity` | the person's e-mail (needs a custom role with the `UserIdentityImpersonation` data action) |
+| `x-client-block` | the chosen block |
+| `x-client-locale` | `nl`, `fr` or `en` |
+| `x-client-conversation-id` | the conversation id |
+| `x-client-ask-first` | `0` skips consent cards (credits off) |
+| `store: false` | Foundry keeps no conversation |
+| first `developer` input item | company context and skills as one JSON array |
+| remaining input items | the browser's history, with sources inlined |
+
+| Received | Meaning |
+|---|---|
+| text deltas | the answer |
+| function call items and outputs | the specialist cards |
+| `genius.step` items | per router step: model, tokens, tools with timing and `{ error }`, specialist spend |
+| `image_generation_call` items | image bytes; the middle tier writes them to `asset`, the model only sees `{ assetId, alt }` |
+
+<Callout kind="alert">
+  The agent and the web app are deployed separately and must agree on this contract. **Deploy the agent first.** A new header or payload shape reaching an old agent is ignored or pasted in as text, without an error.
+</Callout>
+
+## Orchestration rules
+
+- The tool list is one set per turn: a block that forces a specialist offers only its own tool on every step; free chat offers all of them. Claude rejects forced `tool_choice` and binds thinking blocks to their prefix, so per-step tool filtering is a 400.
+- When the first answer on a forcing block makes no tool call, the agent retries once, then runs the specialist on the person's words.
+- `AlreadyAsked` takes the paid tools off the table for the rest of a turn in which one has asked for consent, and `Confirm.Note` states in the tool output that nothing ran.
+- `ChatClientBuilder.Use` is outermost-first: the tool loop first, then `NonStreamingChatClient`, then the block rule.
+
+## Run, test and deploy
+
+<Steps>
+  <Step title="Run locally" icon="play" title-type="h3">
+    ```bash
+    cd agents/genius/src/genius
+    dotnet run   # listens on :8088
+    ```
+  </Step>
+
+  <Step title="Test" icon="flask-conical" title-type="h3">
+    ```bash
+    dotnet test agents/genius/tests/genius.Tests
+    ```
+  </Step>
+
+  <Step title="Deploy" icon="rocket" title-type="h3">
+    ```bash
+    cd agents/genius
+    azd deploy --no-prompt
+    ```
+
+    Models are set in `azure.yaml` (`AI_MODEL_ROUTER`, `AI_MODEL_DOCUMENT`, `AI_MODEL_RESEARCH`, `AI_MODEL_IMAGE`). The gateway key is a reference to a Foundry project connection (`'$${{connections.<name>.credentials.key}}'`), never a literal; the double `$` is required.
+
+    A poll timeout from `azd` is not a failed deploy. Verify with a real chat question afterwards.
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<ExpandableGroup>
+  <Expandable title="Build fails with CS0433" default-open="false">
+    Do not add the `Azure.Identity` package; it conflicts with the copy the hosting library brings.
+  </Expandable>
+
+  <Expandable title="Scope validation error at startup" default-open="false">
+    Register the handler as an instance (`new GeniusHandler(...)`), not as a scoped service.
+  </Expandable>
+
+  <Expandable title="Package restore uses stale versions" default-open="false">
+    Clear the cache with `dotnet nuget locals http-cache --clear`.
+  </Expandable>
+
+  <Expandable title="Renaming the agent" default-open="false">
+    A hosted agent cannot be renamed. Clone it, verify the clone, roll the web app to it, then delete the old one.
+  </Expandable>
+</ExpandableGroup>

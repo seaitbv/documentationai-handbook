@@ -1,0 +1,101 @@
+---
+title: "Testing and verification"
+description: "How tests are written and run in STAS Genius, what the CI pipeline checks, which benchmarks cover model behaviour, and how to prove a change works in the real app."
+---
+
+## Unit tests: plain scripts with node:assert
+
+There is no test framework. Each `lib/<name>.test.ts` is a script that imports the module and asserts with `node:assert/strict`. `npm test` runs every one with `tsx` and stops at the first failure.
+
+```ts title="lib/chunk.test.ts (excerpt)"
+import assert from "node:assert/strict";
+import { chunk } from "./chunk";
+
+function assertLossless(text: string, max: number) {
+  const parts = chunk(text, max);
+  assert.equal(parts.join(""), text, `chunk(${max}) lost or added characters`);
+  for (const p of parts) assert.ok(p.length <= max, `a chunk of ${p.length} exceeds max ${max}`);
+}
+
+assert.deepEqual(chunk("kort", 100), ["kort"]);
+assert.throws(() => chunk("x", 0), /at least 1/);
+```
+
+Run a single file while you work:
+
+```bash
+npx tsx lib/chunk.test.ts
+```
+
+### What to test
+
+Keep logic that matters in pure functions in `lib/` so it can be tested without a database, a session or a network. Tests in this repo pin:
+
+- **Invariants**: `chunk()` is lossless, `strip()` and `inlineSources()` round-trip, every hold covers a realistic run.
+- **Load-bearing strings**: prompt sentences (`lib/prompt.test.ts`), the standard summary template byte for byte (`lib/summarize-prompts.test.ts`), the pinned classifier name (`lib/reporting.test.ts`).
+- **Registries**: every model in `MODELS` has a price row (`lib/costs.test.ts`), every permission key derives from a registry (`lib/permissions.test.ts`).
+- **The i18n contract**: every key exists in all three languages, placeholders survive, no technical jargon reaches users, STAS is capitalized (`lib/i18n.test.ts`).
+- **Time zones**: Brussels formatting at the 23:30 UTC winter boundary. The suite must pass under both time zones:
+
+```bash
+TZ=UTC npm test
+TZ=Europe/Brussels npm test
+```
+
+<Callout kind="alert">
+  Never skip, disable or loosen a test to get a green run. When a pinned string fails, decide whether the change was intended, then update the pin in the same commit with the reason.
+</Callout>
+
+## Agent tests
+
+```bash
+dotnet test agents/genius/tests/genius.Tests
+```
+
+## What CI checks
+
+`azure-pipelines.yml` runs on every push to `main`:
+
+| Job | Steps |
+|---|---|
+| test | gitleaks secret scan, `npm ci`, `npm audit --omit=dev --audit-level=high` (root and `desktop/`), SBOM, `npm run lint && npm test` |
+| deploy | `az acr build`, `az containerapp update` |
+
+The test job holds no Azure identity; the deploy job installs nothing. CI does not build the agent and does not run `db:init`.
+
+Before you push, run locally:
+
+```bash
+npm run lint
+npx tsc --noEmit
+npm test
+```
+
+## Benchmarks for model behaviour
+
+Unit tests cannot tell whether an answer got better. Model-facing changes are measured with benches that call the real models through the gateway (and cost money; check the estimate first).
+
+| Bench | Covers |
+|---|---|
+| `scripts/chat-bench/` | chat answer quality and format |
+| `scripts/pick-bench.mts` | which sources the pick chooses, including `no_lookup` |
+| `meeting-bench` skill, `scripts/meeting-bench/` | meeting summaries against a gold list, with a judge model |
+| `scripts/meeting-bench/qa/` | questions about a meeting, blind pairs |
+| `meeting-find-bench` skill | meeting search relevance |
+| `scripts/template-regression.mts` | summary templates |
+
+Calibrate a judge on the reference first, and compare blind pairs rather than single scores: one run is noisy.
+
+## Proving a change
+
+A passing suite is not proof that a feature works. The **prove** step of the [workflow](/developers/workflow) records the state before and after for every acceptance item:
+
+- UI changes: screenshots in `claudedocs/proof/`, including phone width.
+- Behaviour changes: the request and response, or the database rows before and after.
+- Model changes: a bench run before and after.
+
+Run the app on a separate port when another session already uses `:3000`:
+
+```bash
+PORT=3001 npm run dev
+```

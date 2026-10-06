@@ -1,0 +1,127 @@
+---
+title: "Local setup for STAS Genius"
+description: "Run STAS Genius locally against the shared Azure AI Gateway, Postgres and Foundry agent, with Entra authentication and no passwords."
+---
+
+## Prerequisites
+
+Before you start, make sure you have:
+
+- **Node.js 22** (the Docker image builds on `node:22-alpine`; AI SDK 7 requires 22 or later)
+- **Azure CLI** with access to the project's Azure subscription (name and tenant in the *Azure* section of `CLAUDE.md`)
+- **psql** for applying the schema
+- **.NET 10 SDK** and **azd**, only if you change the Foundry agent in `agents/genius/`
+- Your public IP on the Postgres firewall (ask the project owner)
+- A user row in `app_user`, otherwise sign-in succeeds but the app refuses use
+
+<Callout kind="alert">
+  There is no password anywhere in this setup. Postgres, the Foundry agent and the Speech endpoint all accept your `az login` token. Do not re-enable password auth or add a provider key to make something work locally.
+</Callout>
+
+## Run the app
+
+<Steps>
+  <Step title="Sign in to the right Azure context" icon="key-round" title-type="h3">
+    Every Azure call uses `DefaultAzureCredential`, so the active `az` account decides which tenant your tokens come from.
+
+    ```bash
+    az login --tenant <hosting-tenant>
+    az account set -s <subscription>
+    az account show --query name -o tsv
+    ```
+
+    The last command must print the hosting subscription. All resources live in the hosting tenant; if you are logged in to a customer tenant, Postgres, Foundry and ARM all refuse your tokens.
+  </Step>
+
+  <Step title="Create .env.local" icon="file-cog" title-type="h3">
+    Copy the template and fill in the values. Every variable is documented inline in `.env.example`.
+
+    ```bash
+    cp .env.example .env.local
+    ```
+
+    | Group | Variables |
+    |---|---|
+    | Entra sign-in | `AUTH_SECRET`, `AUTH_MICROSOFT_ENTRA_ID_ID`, `AUTH_MICROSOFT_ENTRA_ID_SECRET`, `AUTH_MICROSOFT_ENTRA_ID_ISSUER` (the `organizations` v2.0 issuer URL), `AUTH_URL`, `AUTH_TENANTS` |
+    | AI Gateway | `AI_GATEWAY_HOST`, `AI_GATEWAY_API_KEY`, `AI_MODEL`, `AI_IMAGE_MODEL` |
+    | Speech | `AZURE_SPEECH_ENDPOINT` |
+    | Agent | `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_AGENT_NAME` |
+    | Postgres | `PGHOST`, `PGUSER` (your own Entra UPN), `PGDATABASE` |
+    | Cost page (optional) | `AZURE_SUBSCRIPTION_ID`, `AZURE_COST_RESOURCE_GROUP` |
+
+    <Callout kind="danger">
+      Never commit `.env.local`. Leave `AUTH_SCOPES` unset: it replaces the scope list wholesale and is meant only to shrink it.
+    </Callout>
+  </Step>
+
+  <Step title="Install dependencies" icon="download" title-type="h3">
+    ```bash
+    npm ci
+    ```
+  </Step>
+
+  <Step title="Apply the schema" icon="database" title-type="h3">
+    `db:init` reads only the `PG*` lines from `.env.local`, fetches an Entra token and applies `db/schema.sql`. The schema is idempotent, so running it twice is safe.
+
+    ```bash
+    npm run db:init
+    ```
+
+    <Callout kind="alert">
+      The schema is shared with production. Run `db:init` before a change that needs new columns is merged, never after: the deployed container reads the new columns as soon as it rolls.
+    </Callout>
+  </Step>
+
+  <Step title="Start the dev server" icon="play" title-type="h3">
+    ```bash
+    npm run dev
+    ```
+
+    Open `http://localhost:3000` and sign in with your work account. The redirect URI `http://localhost:3000/api/auth/callback/microsoft-entra-id` is registered on the Entra app.
+  </Step>
+
+  <Step title="Run the checks" icon="check-circle" title-type="h3">
+    ```bash
+    npm run lint
+    npx tsc --noEmit
+    npm test
+    ```
+
+    `npm test` runs every `lib/*.test.ts` with `tsx` and stops at the first failure. The suite must pass under both `TZ=UTC` and `TZ=Europe/Brussels`.
+  </Step>
+</Steps>
+
+## Working on the Foundry agent
+
+The chat router lives in the C# agent, not in the web app. To run it locally:
+
+```bash
+cd agents/genius/src/genius
+dotnet run   # listens on :8088
+```
+
+Deploy it with `azd deploy --no-prompt` from `agents/genius`. The pipeline never builds the agent. **Deploy the agent before the web container** whenever both change, because a new payload reaching an old agent fails silently.
+
+## Troubleshooting
+
+<ExpandableGroup>
+  <Expandable title="Postgres says: no pg_hba.conf entry" default-open="false">
+    Your IP is not on the server firewall, or it changed. Ask for a firewall rule for your current IP. Never add a `0.0.0.0/0` rule.
+  </Expandable>
+
+  <Expandable title="Every model call returns model_not_found" default-open="false">
+    Usually an old `AI_MODEL` value. The OpenAI deployments carry a `-v2` suffix since 2026-09-18. Check the model names in `lib/model.ts` and use the same names.
+  </Expandable>
+
+  <Expandable title="One model returns 404 and the others work" default-open="false">
+    A known intermittent issue on the Foundry account. A call that resolved carries the `x-ms-deployment-name` response header; a flaky 404 does not. Sample a few calls before debugging your code.
+  </Expandable>
+
+  <Expandable title="Sign-in fails with AADSTS65001" default-open="false">
+    Your session predates a new default scope. Sign out and sign in again.
+  </Expandable>
+
+  <Expandable title="Request fails with HTTP 431 and nothing is logged" default-open="false">
+    The cookie grew past the header size limit, which fires before Next.js runs. Keep photos and tokens out of the session cookie.
+  </Expandable>
+</ExpandableGroup>

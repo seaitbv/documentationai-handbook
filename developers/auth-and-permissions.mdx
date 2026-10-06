@@ -1,0 +1,103 @@
+---
+title: "Authentication and permissions"
+description: "How sign-in, tenants, sessions, Graph tokens, roles, afdeling grants and admin areas work in STAS Genius, and which guard to call in a page, API route or server action."
+---
+
+## Sign-in and tenants
+
+STAS Genius uses one multi-tenant Entra app registration with the `organizations` issuer. Which tenants actually get in is pinned by `AUTH_TENANTS` (`lib/tenants.ts`): every other tenant id is refused before the allowlist is consulted, and a missing list throws at import.
+
+Two separate questions decide access:
+
+| Question | Answered by |
+|---|---|
+| May this account sign in? | Entra, plus the tenant pin |
+| May this person use the app? | a row in `app_user` with `active = true` |
+
+Identity always comes from Entra. The role is read from Postgres on every request and never cached in the JWT.
+
+Adding a customer is one tenant id in `AUTH_TENANTS` and one admin-consent click on a registered redirect URI. Nothing is provisioned in their tenant.
+
+## Sessions and tokens
+
+- The session cookie carries only a `sid`, never a token. `sessionUser()` in `lib/access.ts` is the one gate; no row means no access.
+- Graph tokens live in `oauth_token`, sealed with AES-256-GCM under a key derived from `AUTH_SECRET` (`lib/tokens.ts`). Read one with `graphToken(sid)`.
+- `tokenForScope(sid, tenant, scope)` mints a token for an extra scope from the stored refresh token. It returns `null` on failure and never throws.
+- Sign-out deletes the token row; `removeUser` revokes everything.
+
+<Callout kind="danger">
+  Rotating `AUTH_SECRET` signs everybody out at once and makes every sealed token unreadable. Do it deliberately and empty `oauth_token` afterwards.
+</Callout>
+
+<Callout kind="alert">
+  Never put photos or tokens in the cookie. Past the header size limit the request fails with HTTP 431 before Next.js runs, and nothing is logged. The profile photo lives on the `app_user` row (`lib/photo.ts`).
+</Callout>
+
+## Which guard to call
+
+| Where | Guard | On failure |
+|---|---|---|
+| API route | `requireApiUser()` | returns `{ error: Response }`; return it |
+| Admin page or server action | `requireAdmin(area, ...)` | `notFound()`, so the page's existence is not revealed |
+| Meetings admin | `requireMeetingsManager()` | `notFound()` |
+| Lead-only action | `requireLead()` | refuses |
+| Server component | `getAccess()` | read what the person may use |
+
+```ts title="app/api/example/route.ts"
+export async function POST(req: Request) {
+  const gate = await requireApiUser();
+  if ("error" in gate) return gate.error;
+  // gate.email, gate.user (departments, disabledBlocks, ...) are now trusted
+}
+```
+
+Every API route is a trust boundary and every admin server action re-checks its gate. A hidden link is cosmetic. An admin cannot demote or remove themselves (`assertNotSelf`).
+
+Admin rules are enforced twice: `lib/rbac.ts` throws, which is the guarantee, and the admin page checks the same rules first and redirects to `?err=...`, because a thrown server action reaches the admin as an opaque digest.
+
+## Permissions
+
+`lib/permissions.ts` is pure (no database), so tests pin it and client components can import it. It answers two separate questions.
+
+### What may a person use?
+
+The union of three grant sets; the most permissive wins and nothing takes away:
+
+1. the tenant base (`tenant_policy`)
+2. every afdeling (department) the person belongs to
+3. personal grants on `app_user.grants`
+
+Permission keys are derived from registries that already exist, so a switch cannot name something the app does not have:
+
+| Kind | Key format | Registry |
+|---|---|---|
+| App | `app:<key>` | `APPS` entries with `toggle` in `lib/apps.ts` |
+| Block | `block:<key>` | `GATEABLE` in `lib/blocks.ts` |
+| Write action | `action:<kind>` | `ACTION_KINDS` in `lib/actions.ts` |
+| Module | `module:<key>` | `MODULES` in `lib/apps.ts` |
+| Feature | `feature:<app>.<key>` | `FEATURES` in `lib/apps.ts` |
+
+<Callout kind="alert">
+  A new permission key reaches nobody until it is granted. Add it to the migration list in `db/schema.sql` if existing tenants should have it, and run `db:init` before merging.
+</Callout>
+
+### What may a beheerder manage?
+
+`admin_areas` are fixed bundles: `people`, `groups`, `credits`, `insights`, `conversations`, `skills`. A beheerder (admin) only sees their own tenant through `requireAdmin().tenantFilter`. The superadmin (`app_user.super`) has every area and tenant, and alone manages settings without a tenant (connector secrets, desktop releases, global defaults).
+
+Managing inside an app (the Poolcar fleet, Meetings templates) is a **feature**, not an admin area, and does not make someone a beheerder. A **lead** is a flag on the afdeling membership, not a role.
+
+## Graph scopes
+
+| Rule | Why |
+|---|---|
+| `DEFAULT_SCOPES` holds only the sign-in minimum | an unconsented scope there blocks everyone's sign-in |
+| Extra scopes are minted per request with `tokenForScope()` | a refusal costs one tile for one person |
+| The registration's scope list is `REGISTERED_SCOPES` | a tenant admin's consent replaces the grant list |
+| A new scope: `REGISTERED_SCOPES` + `az ad app permission add` + an admin round per tenant | each tenant consents separately |
+
+A session that predates a new default scope gets `AADSTS65001` once and must sign in again.
+
+## Postgres has no password
+
+`lib/db.ts` hands a `DefaultAzureCredential` token to `pg` per connection. The app's production database role has DML only; schema changes are a developer's `db:init`. Do not re-enable password auth to make something work locally.

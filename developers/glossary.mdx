@@ -1,0 +1,62 @@
+---
+title: "Glossary"
+description: "The Dutch product terms and internal names you will meet in the STAS Genius code, UI and design notes, with their English meaning and where they live."
+---
+
+## Why a glossary
+
+The UI is Dutch first, and many identifiers, routes and design notes use Dutch words. Code comments mix Dutch and English. This table maps the terms you will see most.
+
+## Product terms
+
+| Term | English | Where |
+|---|---|---|
+| Afdeling | department; a group that grants permissions and credits | `department`, `/afdeling`, `/admin/afdelingen` |
+| Beheer, beheerder | administration, admin | `/admin`, `requireAdmin()` |
+| Superadmin | admin across all tenants (`app_user.super`) | `lib/permissions.ts` |
+| Lead | department lead, a flag on the membership | `requireLead()`, Home → Mijn team |
+| Blok | block: a preset of rule, tool and model | `lib/blocks.ts` |
+| Pill | the composer control for a block | `PILLS` |
+| Bron | source: something a person reads from | `GRAPH_SOURCES`, `/connectoren` |
+| Connector | an MCP source linked with the person's own account | `lib/mcp.ts`, `mcp_connection` |
+| Tegel | tile on the connectors page | `/connectoren` |
+| Samenvatten | summarize | `/api/summarize` |
+| Onderzoek | research | `research` specialist |
+| Afbeelding | image | `generate_image` |
+| Voorrouter | the source pick before a chat turn | `/api/sources/gather` |
+| Specialist | a tool that runs its own model inside the agent | `Specialists.cs` |
+| Credits | the monthly budget unit; 1 credit = EUR 0.01 | `lib/credits.ts` |
+| Hold, settle | reserve credits before a call, book the real cost after | `hold()`, `settle()` |
+| Kosten | costs (admin page) | `/admin/kosten` |
+| Gesprek | conversation | `conversation` |
+| Taken, taak | tasks, task | `/taken`, `todo` |
+| Actiepunten | action items in a meeting summary | `lib/summary.ts` |
+| Voorstellen | proposed tasks from a meeting | `Proposals.tsx` |
+| Opname | recording | `meeting_recording` |
+| Transcriberen | transcribe (the one action on a meeting) | `RecordButton` |
+| Notities | notes taken during a meeting | `meeting_recording.notes` |
+| Cockpit | the one page per meeting | `/meetings/<uuid>` |
+| Voorbereiding | meeting preparation (agenda, people) | `meeting_prep`, `PrepTab.tsx` |
+| Sjabloon | template (meeting summary, mail) | `lib/templatedef.ts`, `/admin/mails` |
+| Delen | share | `meeting_share` |
+| Meldingen, bel | notifications, the bell | `lib/notifications.ts` |
+| Poolcar | shared company cars | `lib/poolcar.ts` |
+| Mensen | people (admin data view) | `/admin/data` |
+| Logboek | admin log | `admin_log` |
+| Uitnodigen | invite a user | `lib/invitemail.ts` |
+
+## Technical terms
+
+| Term | Meaning |
+|---|---|
+| AI Gateway | the Azure API Management instance every model call goes through |
+| Hosted agent | the C# orchestrator in Foundry (`agents/genius/`) |
+| Middle tier | the Next.js server: routes, server actions, `lib/` |
+| `data-source` part | a message part carrying fetched or attached text to the model |
+| `source_ref` | what is stored instead of a source's text |
+| `genius.step` | the agent's per-step accounting item |
+| k threshold | the minimum group size before reporting shows a number |
+| DPIA | data protection impact assessment; the running input is in `claudedocs/` |
+| CAO 81 | Belgian collective agreement on monitoring electronic communications |
+| Software factory | the isolate, build, prove, ship workflow |
+| Worktree | a separate git checkout per change; the root checkout never changes branch |

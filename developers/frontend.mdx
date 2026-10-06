@@ -1,0 +1,89 @@
+---
+title: "Frontend conventions"
+description: "UI rules for STAS Genius: components, languages, dates, the chat rendering stack, error messages, the no-explanatory-text rule and editing through selection."
+---
+
+## Building blocks
+
+| Need | Use |
+|---|---|
+| Primitives (button, popover, dialog) | shadcn on base-ui in `components/ui/` |
+| Chat messages, prompt input | Vercel AI Elements in `components/ai-elements/` (patched) |
+| Markdown in answers | Streamdown |
+| Layout of a signed-in page | `components/shell/Shell.tsx` with `shellProps` from `components/shell/server.tsx` |
+| A table with search, filters and sort | `DataTable` (`lib/datatable.ts`) |
+| An admin entry from a module | `components/shell/ManageLink.tsx` |
+| Brand styling | the `sqg-stas-design` skill; STAS font, STAS navy |
+
+Check AI Elements and the Vercel chat examples before building chat UI by hand.
+
+<Callout kind="alert">
+  `components/ai-elements/` is patched: four components were deleted on purpose and `message.tsx` uses `render={button}`. Diff before re-adding a component. Streamdown needs its `@source` line in the CSS, and **never pass `remarkPlugins`**: it replaces the GFM default and tables stop rendering.
+</Callout>
+
+## Languages
+
+The locale lives in the `stas-locale` cookie, not the URL. The app is behind sign-in, so there is no SEO reason for `app/[locale]/` segments.
+
+```tsx
+// Server component
+import { getT } from "@/lib/i18n-server";
+const t = await getT();
+return <a href="/help">{t("nav.help")}</a>;
+
+// Client component
+import { useT } from "@/lib/i18n-client";
+const t = useT();
+```
+
+- All three dictionaries are in `lib/i18n.ts`. `fr` and `en` are typed `Record<MessageKey, string>` against `nl`, so a missing key fails the build.
+- Only the locale string crosses the server/client boundary; dictionaries are a static import.
+- API routes read the same cookie for their error bodies and for the language instruction sent to the model.
+- Switching language is a `<form>` posting to the `setLocale` server action. It works without JavaScript.
+
+## Dates are Brussels wall-clock
+
+The container runs in UTC and browsers run anywhere. Never rely on the default time zone.
+
+| Need | Use |
+|---|---|
+| A formatter for people | `dateFormat(locale, opts)` in `lib/i18n.ts` (pins `TIME_ZONE`, maps `en` to `en-GB`) |
+| A machine string for prompts, CSVs, filenames | `brussels()`, `brusselsDay()` |
+| The edges of a named day | `brusselsInstant(day, time)` |
+| SQL | `at time zone 'Europe/Brussels'` |
+
+## Text on screen
+
+### No explanatory text
+
+Since 2026-10-01 there is no grey helper line under or next to a control, field, section or page explaining it, including disclaimers and privacy notices (the DPIA and works-council texts carry those).
+
+Allowed: `/help`, fold-out FAQs, warnings inside a confirm step, labels, status, empty states, errors with their hint, placeholders and tooltips.
+
+### Edit through selection
+
+Editing text or AI content means: select it, then use the floating bar. Never add a separate edit button. Follow the patterns in `components/chat/Markable.tsx` and `components/meetings/Correctable.tsx`.
+
+### Errors people read
+
+- A plain sentence and what to do next. Technical detail goes to the server log.
+- No status codes, API, model, deployment, resource or file names. `lib/i18n.test.ts` checks every string. "Azure" and "gateway" are allowed on the admin cost pages.
+- Render `hint` wherever you render `error`. Dropping it leaves a dead end.
+- `app/not-found.tsx` and `app/error.tsx` exist so nothing falls through to English defaults.
+
+### Spelling
+
+**STAS** is always in capitals in text (UI, prompts, docs), never in identifiers (`stas.be`, `StasLogo`). The test checks it.
+
+## The chat surface
+
+- An answer reads like claude.ai: a `max-w-3xl` column, full-width answers at 15px/1.5, `.md-chat` spacing, the user bubble in `black/5`.
+- Under a thread the composer is one line and grows to `min(35dvh,16rem)`.
+- `useChat`'s status is `ready` while `/api/summarize` runs, so use the separate `working` flag to block a second job.
+- A cancel is not a failure: check `signal.aborted` before reporting anything.
+
+## Layout habits
+
+- Detail pages: object actions are header popovers beside the title; supporting content goes in accordions with a count.
+- Calm through order, not through less information: keep the detail, add hierarchy and a sticky header.
+- Every page works at phone width.
